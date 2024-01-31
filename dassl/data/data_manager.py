@@ -9,7 +9,14 @@ from dassl.utils import read_image
 
 from .datasets import build_dataset
 from .samplers import build_sampler
-from .transforms import INTERPOLATION_MODES, build_transform
+from .transforms import (
+    INTERPOLATION_MODES, build_transform,
+    normal_pc, translate_pointcloud, 
+    rotation_point_cloud, jitter_point_cloud,
+    PointcloudToTensor,  PointcloudScale,
+    PointcloudRotate, PointcloudRotatePerturbation,
+    PointcloudTranslate, PointcloudJitter,
+)
 
 
 def build_data_loader(
@@ -195,6 +202,22 @@ class DatasetWrapper(TorchDataset):
         # self.transform = transform  # accept list (tuple) as input
         self.is_train = is_train
         self.is_pointda = cfg.DATASET.TYPE == "pointda"
+        self.is_sim2real = cfg.DATASET.TYPE == "sim2real"
+        self.is_sonn = cfg.DATASET.NAME == "ScanObjectNN"
+        self.swapaxis = cfg.DATASET.NAME == "ModelNet_11"
+
+        if self.is_sim2real:
+            self.transforms = T.Compose([
+                PointcloudToTensor(),
+                PointcloudScale(),
+                PointcloudRotate(),
+                PointcloudRotatePerturbation(),
+                PointcloudTranslate(),
+                PointcloudJitter(),
+            ])
+
+        if self.is_sonn:
+            print(f'>>>>>>> self.is_sonn: {self.is_sonn}')
 
     def __len__(self):
         return len(self.data_source)
@@ -212,7 +235,13 @@ class DatasetWrapper(TorchDataset):
         num_points = self.cfg.PointEncoder.num_points
         pointcloud = item.impath[: num_points]
 
-        if self.is_pointda:
+        # NOTE added by jerry
+        if self.swapaxis:
+            pointcloud[:, 1] = pointcloud[:, 2] + pointcloud[:, 1]
+            pointcloud[:, 2] = pointcloud[:, 1] - pointcloud[:, 2]
+            pointcloud[:, 1] = pointcloud[:, 1] - pointcloud[:, 2]
+
+        if self.is_pointda or self.is_sim2real or self.is_sonn:
             # normalize pointcloud both during training and test in this case
             pointcloud = normal_pc(pointcloud)
 
@@ -221,6 +250,12 @@ class DatasetWrapper(TorchDataset):
             if self.is_pointda:
                 pointcloud = rotation_point_cloud(pointcloud)
                 pointcloud = jitter_point_cloud(pointcloud)
+
+            # NOTE data augmentations for sim2real benchmark, added by jerry
+            elif self.is_sim2real:
+                pointcloud = self.transforms(pointcloud).numpy()
+
+            # NOTE apply translation only by default
             else:
                 pointcloud = translate_pointcloud(pointcloud)
                 np.random.shuffle(pointcloud)
@@ -228,63 +263,3 @@ class DatasetWrapper(TorchDataset):
         output['img'] = pointcloud.astype("float32")
 
         return output
-
-    
-def translate_pointcloud(pointcloud):
-    xyz1 = np.random.uniform(low=2./3., high=3./2., size=[3])
-    xyz2 = np.random.uniform(low=-0.2, high=0.2, size=[3])
-
-    translated_pointcloud = np.add(np.multiply(pointcloud, xyz1), xyz2).astype('float32')
-    return translated_pointcloud
-
-
-def normal_pc(pc):
-    """
-    normalize point cloud in range L
-    :param pc: type list
-    :return: type list
-    """
-    pc_mean = pc.mean(axis=0)
-    pc = pc - pc_mean
-    pc_L_max = np.max(np.sqrt(np.sum(abs(pc ** 2), axis=-1)))
-    pc = pc/pc_L_max
-    return pc
-
-
-def rotation_point_cloud(pc):
-    """
-    Randomly rotate the point clouds to augment the dataset
-    rotation is per shape based along up direction
-    :param pc: B X N X 3 array, original batch of point clouds
-    :return: BxNx3 array, rotated batch of point clouds
-    """
-    # rotated_data = np.zeros(pc.shape, dtype=np.float32)
-
-    rotation_angle = np.random.uniform() * 2 * np.pi
-    cosval = np.cos(rotation_angle)
-    sinval = np.sin(rotation_angle)
-    # rotation_matrix = np.array([[cosval, 0, sinval],
-    #                             [0, 1, 0],
-    #                             [-sinval, 0, cosval]])
-    rotation_matrix = np.array([[1, 0, 0],
-                                [0, cosval, -sinval],
-                                [0, sinval, cosval]])
-    # rotation_matrix = np.array([[cosval, -sinval, 0],
-    #                             [sinval, cosval, 0],
-    #                             [0, 0, 1]])
-    rotated_data = np.dot(pc.reshape((-1, 3)), rotation_matrix)
-
-    return rotated_data
-
-
-def jitter_point_cloud(pc, sigma=0.01, clip=0.05):
-    """
-    Randomly jitter points. jittering is per point.
-    :param pc: B X N X 3 array, original batch of point clouds
-    :param sigma:
-    :param clip:
-    :return:
-    """
-    jittered_data = np.clip(sigma * np.random.randn(*pc.shape), -1 * clip, clip)
-    jittered_data += pc
-    return jittered_data

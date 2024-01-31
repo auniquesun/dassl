@@ -352,3 +352,170 @@ def _build_transform_test(cfg, choices, target_size, normalize):
     tfm_test = Compose(tfm_test)
 
     return tfm_test
+
+
+# ------ The following is added by jerry for 3d promptsrc ------
+def translate_pointcloud(pointcloud):
+    xyz1 = np.random.uniform(low=2./3., high=3./2., size=[3])
+    xyz2 = np.random.uniform(low=-0.2, high=0.2, size=[3])
+
+    translated_pointcloud = np.add(np.multiply(pointcloud, xyz1), xyz2).astype('float32')
+    return translated_pointcloud
+
+
+def normal_pc(pc):
+    """
+    normalize point cloud in range L
+    :param pc: type list
+    :return: type list
+    """
+    pc_mean = pc.mean(axis=0)
+    pc = pc - pc_mean
+    pc_L_max = np.max(np.sqrt(np.sum(abs(pc ** 2), axis=-1)))
+    pc = pc/pc_L_max
+    return pc
+
+
+def rotation_point_cloud(pc):
+    """
+    Randomly rotate the point clouds to augment the dataset
+    rotation is per shape based along up direction
+    :param pc: B X N X 3 array, original batch of point clouds
+    :return: BxNx3 array, rotated batch of point clouds
+    """
+    # rotated_data = np.zeros(pc.shape, dtype=np.float32)
+
+    rotation_angle = np.random.uniform() * 2 * np.pi
+    cosval = np.cos(rotation_angle)
+    sinval = np.sin(rotation_angle)
+    # rotation_matrix = np.array([[cosval, 0, sinval],
+    #                             [0, 1, 0],
+    #                             [-sinval, 0, cosval]])
+    rotation_matrix = np.array([[1, 0, 0],
+                                [0, cosval, -sinval],
+                                [0, sinval, cosval]])
+    # rotation_matrix = np.array([[cosval, -sinval, 0],
+    #                             [sinval, cosval, 0],
+    #                             [0, 0, 1]])
+    rotated_data = np.dot(pc.reshape((-1, 3)), rotation_matrix)
+
+    return rotated_data
+
+
+def jitter_point_cloud(pc, sigma=0.01, clip=0.05):
+    """
+    Randomly jitter points. jittering is per point.
+    :param pc: B X N X 3 array, original batch of point clouds
+    :param sigma:
+    :param clip:
+    :return:
+    """
+    jittered_data = np.clip(sigma * np.random.randn(*pc.shape), -1 * clip, clip)
+    jittered_data += pc
+    return jittered_data
+
+
+def angle_axis(angle, axis):
+    u = axis / np.linalg.norm(axis)
+    cosval, sinval = np.cos(angle), np.sin(angle)
+
+    cross_prod_mat = np.array([[0.0, -u[2], u[1]],
+                                [u[2], 0.0, -u[0]],
+                                [-u[1], u[0], 0.0]])
+
+    R = torch.from_numpy(
+        cosval * np.eye(3)
+        + sinval * cross_prod_mat
+        + (1.0 - cosval) * np.outer(u, u)
+    )
+    return R.float()
+
+
+class PointcloudScale(object):
+    def __init__(self, lo=0.8, hi=1.25):
+        self.lo, self.hi = lo, hi
+
+    def __call__(self, points):
+        scaler = np.random.uniform(self.lo, self.hi)
+        points[:, 0:3] *= scaler
+        return points
+
+
+class PointcloudRotate(object):
+    def __init__(self, axis=np.array([0.0, 1.0, 0.0])):
+        self.axis = axis
+
+    def __call__(self, points):
+        rotation_angle = np.random.uniform() * 2 * np.pi
+        rotation_matrix = angle_axis(rotation_angle, self.axis)
+
+        normals = points.size(1) > 3
+        if not normals:
+            return torch.matmul(points, rotation_matrix.t())
+        else:
+            pc_xyz = points[:, 0:3]
+            pc_normals = points[:, 3:]
+            points[:, 0:3] = torch.matmul(pc_xyz, rotation_matrix.t())
+            points[:, 3:] = torch.matmul(pc_normals, rotation_matrix.t())
+
+            return points
+
+
+class PointcloudRotatePerturbation(object):
+    def __init__(self, angle_sigma=0.06, angle_clip=0.18):
+        self.angle_sigma, self.angle_clip = angle_sigma, angle_clip
+
+    def _get_angles(self):
+        angles = np.clip(
+            self.angle_sigma * np.random.randn(3), -self.angle_clip, self.angle_clip
+        )
+
+        return angles
+
+    def __call__(self, points):
+        angles = self._get_angles()
+        Rx = angle_axis(angles[0], np.array([1.0, 0.0, 0.0]))
+        Ry = angle_axis(angles[1], np.array([0.0, 1.0, 0.0]))
+        Rz = angle_axis(angles[2], np.array([0.0, 0.0, 1.0]))
+
+        rotation_matrix = torch.matmul(torch.matmul(Rz, Ry), Rx)
+
+        normals = points.size(1) > 3
+        if not normals:
+            return torch.matmul(points, rotation_matrix.t())
+        else:
+            pc_xyz = points[:, 0:3]
+            pc_normals = points[:, 3:]
+            points[:, 0:3] = torch.matmul(pc_xyz, rotation_matrix.t())
+            points[:, 3:] = torch.matmul(pc_normals, rotation_matrix.t())
+
+            return points
+
+
+class PointcloudJitter(object):
+    def __init__(self, std=0.01, clip=0.05):
+        self.std, self.clip = std, clip
+
+    def __call__(self, points):
+        jittered_data = (
+            points.new(points.size(0), 3)
+            .normal_(mean=0.0, std=self.std)
+            .clamp_(-self.clip, self.clip)
+        )
+        points[:, 0:3] += jittered_data
+        return points
+
+
+class PointcloudTranslate(object):
+    def __init__(self, translate_range=0.1):
+        self.translate_range = translate_range
+
+    def __call__(self, points):
+        translation = np.random.uniform(-self.translate_range, self.translate_range)
+        points[:, 0:3] += translation
+        return points
+
+
+class PointcloudToTensor(object):
+    def __call__(self, points):
+        return torch.from_numpy(points).float()
