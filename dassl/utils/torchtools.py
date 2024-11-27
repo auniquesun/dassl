@@ -58,20 +58,23 @@ def save_checkpoint(
     epoch = state["epoch"]
     if not model_name:
         model_name = "model.pth.tar-" + str(epoch)
-    fpath = osp.join(save_dir, model_name)
-    torch.save(state, fpath)
-    print(f"Checkpoint saved to {fpath}")
 
-    # save current model name
-    checkpoint_file = osp.join(save_dir, "checkpoint")
-    checkpoint = open(checkpoint_file, "w+")
-    checkpoint.write("{}\n".format(osp.basename(fpath)))
-    checkpoint.close()
+    # NOTE do not save the weights of last epoch, save the weights in the best epoch is enough
+    if model_name != f"model.pth.tar-{epoch}":
+        fpath = osp.join(save_dir, model_name)
+        torch.save(state, fpath)
+        print(f"Checkpoint saved to {fpath}")
 
-    if is_best:
-        best_fpath = osp.join(osp.dirname(fpath), "model-best.pth.tar")
-        shutil.copy(fpath, best_fpath)
-        print('Best checkpoint saved to "{}"'.format(best_fpath))
+        # save current model name
+        checkpoint_file = osp.join(save_dir, "checkpoint")
+        checkpoint = open(checkpoint_file, "w+")
+        checkpoint.write("{}\n".format(osp.basename(fpath)))
+        checkpoint.close()
+
+        if is_best:
+            best_fpath = osp.join(osp.dirname(fpath), "model-best.pth.tar")
+            shutil.copy(fpath, best_fpath)
+            print('Best checkpoint saved to "{}"'.format(best_fpath))
 
 
 def load_checkpoint(fpath):

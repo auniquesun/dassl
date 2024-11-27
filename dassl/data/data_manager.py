@@ -5,7 +5,6 @@ import torchvision.transforms as T
 from tabulate import tabulate
 from torch.utils.data import Dataset as TorchDataset
 
-from dassl.utils import read_image
 
 from .datasets import build_dataset
 from .samplers import build_sampler
@@ -204,7 +203,9 @@ class DatasetWrapper(TorchDataset):
         self.is_pointda = cfg.DATASET.TYPE == "pointda"
         self.is_sim2real = cfg.DATASET.TYPE == "sim2real"
         self.is_sonn = cfg.DATASET.NAME == "ScanObjectNN"
-        self.swapaxis = cfg.DATASET.NAME == "ModelNet_11"
+        self.is_omni3d = cfg.DATASET.NAME == "OmniObject3D"
+        self.is_o_lvis = cfg.DATASET.NAME == "Objaverse_LVIS"
+        self.swapaxis = cfg.DATASET.NAME == "ModelNet_11" or cfg.DATASET.NAME == "Objaverse_LVIS"
 
         if self.is_sim2real:
             self.transforms = T.Compose([
@@ -219,6 +220,9 @@ class DatasetWrapper(TorchDataset):
         if self.is_sonn:
             print(f'>>>>>>> self.is_sonn: {self.is_sonn}')
 
+        if self.is_omni3d:
+            print(f'>>>>>>> self.is_omni3d: {self.is_omni3d}')
+
     def __len__(self):
         return len(self.data_source)
 
@@ -228,10 +232,11 @@ class DatasetWrapper(TorchDataset):
         output = {
             "label": item.label,
             "domain": item.domain,
-            "impath": item.impath,
+            "impath": item.impath,  # assign values in specific `Dataset` definition 
             "index": idx
         }
 
+        # NOTE not sure 1024 is enough for Objaverse_lvis, its default value is 10000
         num_points = self.cfg.PointEncoder.num_points
         pointcloud = item.impath[: num_points]
 
@@ -241,7 +246,7 @@ class DatasetWrapper(TorchDataset):
             pointcloud[:, 2] = pointcloud[:, 1] - pointcloud[:, 2]
             pointcloud[:, 1] = pointcloud[:, 1] - pointcloud[:, 2]
 
-        if self.is_pointda or self.is_sim2real or self.is_sonn:
+        if self.is_pointda or self.is_sim2real or self.is_sonn or self.is_omni3d or self.is_o_lvis:
             # normalize pointcloud both during training and test in this case
             pointcloud = normal_pc(pointcloud)
 
@@ -260,6 +265,6 @@ class DatasetWrapper(TorchDataset):
                 pointcloud = translate_pointcloud(pointcloud)
                 np.random.shuffle(pointcloud)
 
-        output['img'] = pointcloud.astype("float32")
+        output['pc'] = pointcloud.astype("float32")
 
         return output

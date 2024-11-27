@@ -6,8 +6,9 @@ import torch
 import torch.nn as nn
 
 from .radam import RAdam
+from .sam import SAM
 
-AVAI_OPTIMS = ["adam", "amsgrad", "sgd", "rmsprop", "radam", "adamw"]
+AVAI_OPTIMS = ["adam", "amsgrad", "sgd", "sam", "rmsprop", "radam", "adamw"]
 
 
 def build_optimizer(model, optim_cfg, param_groups=None):
@@ -21,7 +22,7 @@ def build_optimizer(model, optim_cfg, param_groups=None):
     optim = optim_cfg.NAME
     lr = optim_cfg.LR
     weight_decay = optim_cfg.WEIGHT_DECAY
-    momentum = optim_cfg.MOMENTUM
+    momentum = optim_cfg.MOMENTUM   # 0.9 by default
     sgd_dampening = optim_cfg.SGD_DAMPNING
     sgd_nesterov = optim_cfg.SGD_NESTEROV
     rmsprop_alpha = optim_cfg.RMSPROP_ALPHA
@@ -79,7 +80,7 @@ def build_optimizer(model, optim_cfg, param_groups=None):
                 },
             ]
 
-        else:
+        else:   # NOTE choose this branch by default
             if isinstance(model, nn.Module):
                 param_groups = model.parameters()
             else:
@@ -111,6 +112,10 @@ def build_optimizer(model, optim_cfg, param_groups=None):
             dampening=sgd_dampening,
             nesterov=sgd_nesterov,
         )
+
+    elif optim == "sam":
+        base_optimizer = torch.optim.SGD  # define an optimizer for the "sharpness-aware" update
+        optimizer = SAM(param_groups, base_optimizer, lr=lr, momentum=momentum)
 
     elif optim == "rmsprop":
         optimizer = torch.optim.RMSprop(

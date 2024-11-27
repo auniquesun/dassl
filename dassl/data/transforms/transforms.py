@@ -8,6 +8,7 @@ from torchvision.transforms import (
     RandomHorizontalFlip
 )
 from torchvision.transforms.functional import InterpolationMode
+import torchvision.transforms as transforms
 
 from .autoaugment import SVHNPolicy, CIFAR10Policy, ImageNetPolicy
 from .randaugment import RandAugment, RandAugment2, RandAugmentFixMatch
@@ -446,17 +447,18 @@ class PointcloudRotate(object):
         self.axis = axis
 
     def __call__(self, points):
+        device = points.device
         rotation_angle = np.random.uniform() * 2 * np.pi
-        rotation_matrix = angle_axis(rotation_angle, self.axis)
+        rotation_matrix = angle_axis(rotation_angle, self.axis).to(device)
 
-        normals = points.size(1) > 3
+        normals = points.size(-1) > 3
         if not normals:
             return torch.matmul(points, rotation_matrix.t())
         else:
-            pc_xyz = points[:, 0:3]
+            pc_xyz = points[:, :, 0:3]
             pc_normals = points[:, 3:]
-            points[:, 0:3] = torch.matmul(pc_xyz, rotation_matrix.t())
-            points[:, 3:] = torch.matmul(pc_normals, rotation_matrix.t())
+            points[:, :, 0:3] = torch.matmul(pc_xyz, rotation_matrix.t())
+            points[:, :, 3:] = torch.matmul(pc_normals, rotation_matrix.t())
 
             return points
 
@@ -511,7 +513,11 @@ class PointcloudTranslate(object):
         self.translate_range = translate_range
 
     def __call__(self, points):
-        translation = np.random.uniform(-self.translate_range, self.translate_range)
+        device = points.device
+        coord_min = torch.min(points[:, :3], dim=0)[0]
+        coord_max = torch.max(points[:, :3], dim=0)[0]
+        coord_diff = coord_max - coord_min
+        translation = (2 * self.translate_range * torch.rand(3, device=device) - self.translate_range) * coord_diff
         points[:, 0:3] += translation
         return points
 

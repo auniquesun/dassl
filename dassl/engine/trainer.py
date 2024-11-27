@@ -484,7 +484,7 @@ class SimpleTrainer(TrainerBase):
         return self.model(input)
 
     def parse_batch_test(self, batch):
-        input = batch["img"]
+        input = batch["pc"]
         label = batch["label"]
 
         input = input.to(self.device)
@@ -634,7 +634,7 @@ class TrainerX(SimpleTrainer):
             end = time.time()
 
     def parse_batch_train(self, batch):
-        input = batch["img"]
+        input = batch["pc"]
         label = batch["label"]
         domain = batch["domain"]
 
